@@ -1,0 +1,32 @@
+# ── Secrets — never commit these ────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+secrets.toml
+.streamlit/secrets.toml
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.Python
+
+# ── Beneficiary data — PII, must not go to GitHub ──────────────────────────
+# Scanned slips and generated village files contain names, phone numbers and
+# national ID numbers. Keep them out of version control entirely.
+*.pdf
+Processed_Data/
+Processed_Data*.zip
+NEW_LOCATIONS_REVIEW.xlsx
+Master*.xlsx
+
+# ── Editors / OS ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

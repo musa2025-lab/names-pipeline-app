@@ -1,0 +1,14 @@
+# Streamlit settings applied wherever this app runs.
+
+[server]
+# Slips are single-page scans; 25MB is generous and stops accidental huge uploads.
+maxUploadSize = 25
+enableXsrfProtection = true
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+primaryColor = "#174781"
