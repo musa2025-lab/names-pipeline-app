@@ -16,6 +16,7 @@ import os
 import pandas as pd
 import streamlit as st
 
+from auth import require_access, sign_out_button
 from pipeline import (
     BENEFICIARY_FIELDS,
     build_zip,
@@ -40,6 +41,11 @@ EDITOR_COLUMNS = {
 PICK = "— select —"
 
 st.set_page_config(page_title="Uganda Names Pipeline", page_icon="📋", layout="wide")
+
+# Gate before anything else renders - this app handles beneficiary personal data.
+CURRENT_USER = require_access()
+sign_out_button()
+st.sidebar.caption(f"Signed in as: {CURRENT_USER}")
 
 st.title("Uganda Names Pipeline")
 st.caption(

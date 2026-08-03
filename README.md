@@ -43,17 +43,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Set your key, then start it:
+Set your key and an access mode, then start it:
 
 ```powershell
 # PowerShell
 $env:ANTHROPIC_API_KEY = "sk-ant-..."
+$env:ALLOW_NO_AUTH = "true"        # local only - see Access control below
 python -m streamlit run app.py
 ```
 
 ```bash
 # bash
 export ANTHROPIC_API_KEY="sk-ant-..."
+export ALLOW_NO_AUTH=true          # local only
 streamlit run app.py
 ```
 
@@ -64,6 +66,23 @@ Opens at <http://localhost:8501>.
 
 ---
 
+## Access control
+
+The app processes beneficiary names, phone numbers and national ID numbers, so
+**it refuses to start unless an access mode is configured.** Set exactly one:
+
+| Variable | Use | Notes |
+|---|---|---|
+| `AUTH_MODE=platform` | **Preferred.** Azure App Service Authentication (Entra ID) in front of the app | Per-person sign-in with your existing Microsoft accounts. Set this *after* enabling Authentication in Azure. |
+| `APP_PASSWORD=<password>` | **Fallback** when SSO isn't available | Weaker: no per-person audit trail, and revoking one person means rotating for everyone. |
+| `ALLOW_NO_AUTH=true` | **Local development only** | Shows a persistent warning. Never set on a hosted URL. |
+
+Both hosted modes **fail closed**: if `AUTH_MODE=platform` is set but no
+signed-in user reaches the app (e.g. Authentication got switched off), the app
+refuses to open rather than serving data.
+
+---
+
 ## Deploy
 
 See **[DEPLOY.md](DEPLOY.md)** for the full Azure App Service walkthrough.
@@ -71,9 +90,8 @@ See **[DEPLOY.md](DEPLOY.md)** for the full Azure App Service walkthrough.
 Two things that are **not optional**:
 
 1. **`ANTHROPIC_API_KEY` goes in the host's app settings** — never in this repo.
-2. **Turn on App Service Authentication** (Entra ID / Microsoft). This app handles
-   beneficiary names, phone numbers and national ID numbers; without
-   authentication the URL is open to anyone who finds it.
+2. **An access mode must be set** — `AUTH_MODE=platform` if you can enable
+   App Service Authentication, otherwise `APP_PASSWORD`.
 
 ---
 
@@ -82,6 +100,7 @@ Two things that are **not optional**:
 | File | Purpose |
 |---|---|
 | `app.py` | The web UI — upload, review/edit, download |
+| `auth.py` | Access gate — platform SSO or shared password; fails closed |
 | `pipeline.py` | Extraction, Excel building, location validation, typo detection |
 | `g_Locations_UG.csv` | Authoritative location list; drives the dropdowns |
 | `requirements.txt` | Dependencies |

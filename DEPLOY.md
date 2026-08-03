@@ -59,17 +59,38 @@ az webapp config set --name uganda-names-pipeline \
   --startup-file "python -m streamlit run app.py --server.port 8000 --server.address 0.0.0.0"
 ```
 
-### 3. Add the API key
+### 3. Add the API key and an access mode
+
+The app **will not start** without an access mode — it handles beneficiary
+personal data, so open access is blocked by design.
+
+**If you can enable App Service Authentication** (try step 5 first — it's often
+allowed without an admin):
 
 ```bash
 az webapp config appsettings set --name uganda-names-pipeline \
   --resource-group uganda-pipeline-rg \
   --settings ANTHROPIC_API_KEY="sk-ant-..." \
+             AUTH_MODE="platform" \
              SCM_DO_BUILD_DURING_DEPLOYMENT=true
 ```
 
-Generate a **new** key at console.anthropic.com for this app rather than reusing
-a personal one, so you can revoke it independently.
+**If Authentication is blocked in your tenant**, use the shared-password
+fallback instead:
+
+```bash
+az webapp config appsettings set --name uganda-names-pipeline \
+  --resource-group uganda-pipeline-rg \
+  --settings ANTHROPIC_API_KEY="sk-ant-..." \
+             APP_PASSWORD="a-long-random-password" \
+             SCM_DO_BUILD_DURING_DEPLOYMENT=true
+```
+
+Generate a **new** Anthropic key at console.anthropic.com for this app rather than
+reusing a personal one, so you can revoke it independently.
+
+> Set **only one** of `AUTH_MODE` / `APP_PASSWORD`. Never set `ALLOW_NO_AUTH` on
+> a hosted app.
 
 ### 4. Deploy the code
 
@@ -84,18 +105,37 @@ it to populate the Sub county / Parish / Village dropdowns.
 
 ### 5. Lock it down — do not skip this
 
-The app handles beneficiary names, phone numbers and national IDs. Left open,
-the URL is public.
+**Try this yourself first — you probably don't need an admin.** Creating app
+registrations is *allowed by default* in Entra ID, and Azure's "Express" option
+creates the one needed for you. Only escalate to IT if this step actually fails.
 
 Azure Portal → your App Service → **Settings → Authentication** →
 **Add identity provider** → **Microsoft** →
 - Tenant type: **Workforce**
+- App registration type: **Create new app registration** (Express)
 - Client application requirement: **Allow requests only from this application**
 - Restrict access: **Require authentication**
 - Unauthenticated requests: **HTTP 302 redirect to login**
 
 Team members then sign in with their existing DelAgua Microsoft 365 account. No
 new passwords, no extra admin work per person.
+
+Once it's on, make sure `AUTH_MODE=platform` is set (step 3) so the app also
+verifies the signed-in user server-side.
+
+#### If Authentication is blocked in your tenant
+
+Use `APP_PASSWORD` (step 3) instead and share the password with the team out of
+band. Be aware of what you give up:
+
+- **No per-person audit trail** — you can't tell who processed what.
+- **Revoking one person means rotating for everyone.**
+- Anyone the password is forwarded to can get in.
+
+That's a reasonable stop-gap for a small known team, but treat SSO as the target
+and switch over when IT can action it. Optionally add
+**Networking → Access restrictions** to limit access to your office IP ranges as
+a second layer (note: this blocks remote and field users).
 
 ### 6. Share the URL
 
