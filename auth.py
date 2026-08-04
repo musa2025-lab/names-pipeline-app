@@ -21,10 +21,11 @@ overrides that, and exists only for local development.
 """
 
 import hmac
-import os
 import time
 
 import streamlit as st
+
+from settings import get_setting
 
 _ATTEMPT_KEY = "_auth_attempts"
 _AUTHED_KEY = "_auth_ok"
@@ -49,9 +50,9 @@ def _platform_user() -> str | None:
 
 def require_access() -> str:
     """Gate the app. Returns a label for who's signed in, or stops the script."""
-    mode = (os.environ.get("AUTH_MODE") or "").strip().lower()
-    password = os.environ.get("APP_PASSWORD") or ""
-    allow_open = (os.environ.get("ALLOW_NO_AUTH") or "").strip().lower() == "true"
+    mode = get_setting("AUTH_MODE").lower()
+    password = get_setting("APP_PASSWORD")
+    allow_open = get_setting("ALLOW_NO_AUTH").lower() == "true"
 
     # ── 1. Platform SSO in front of the app ────────────────────────────────
     if mode == "platform":

@@ -85,13 +85,24 @@ refuses to open rather than serving data.
 
 ## Deploy
 
-See **[DEPLOY.md](DEPLOY.md)** for the full Azure App Service walkthrough.
+Two options:
 
-Two things that are **not optional**:
+| Guide | Route | Time | Best for |
+|---|---|---|---|
+| **[DEPLOY_SIMPLE.md](DEPLOY_SIMPLE.md)** | Streamlit Community Cloud | ~5 min, free | Getting the team testing fast |
+| **[DEPLOY.md](DEPLOY.md)** | Azure App Service | ~30 min, ~£10/mo | Real beneficiary data — stays in DelAgua's tenant, per-person SSO |
 
-1. **`ANTHROPIC_API_KEY` goes in the host's app settings** — never in this repo.
-2. **An access mode must be set** — `AUTH_MODE=platform` if you can enable
-   App Service Authentication, otherwise `APP_PASSWORD`.
+Both work from this same repo; only the secrets differ. Read the trade-off table
+at the end of `DEPLOY_SIMPLE.md` before putting real slips through the free route.
+
+Two things that are **not optional** either way:
+
+1. **`ANTHROPIC_API_KEY` goes in the host's settings** — never in this repo.
+2. **An access mode must be set** — `AUTH_MODE=platform` (Azure SSO) or
+   `APP_PASSWORD` (shared password). The app refuses to start without one.
+
+Configuration is read from `st.secrets` **or** environment variables, so the same
+code runs unchanged on either host.
 
 ---
 
@@ -101,6 +112,7 @@ Two things that are **not optional**:
 |---|---|
 | `app.py` | The web UI — upload, review/edit, download |
 | `auth.py` | Access gate — platform SSO or shared password; fails closed |
+| `settings.py` | Reads config from `st.secrets` or environment variables |
 | `pipeline.py` | Extraction, Excel building, location validation, typo detection |
 | `g_Locations_UG.csv` | Authoritative location list; drives the dropdowns |
 | `requirements.txt` | Dependencies |

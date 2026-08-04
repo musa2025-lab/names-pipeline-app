@@ -11,12 +11,11 @@ this app's server-side settings.
 Run locally:   streamlit run app.py
 """
 
-import os
-
 import pandas as pd
 import streamlit as st
 
 from auth import require_access, sign_out_button
+from settings import get_setting
 from pipeline import (
     BENEFICIARY_FIELDS,
     build_zip,
@@ -53,7 +52,8 @@ st.caption(
     "correct anything the scan got wrong, then download the Excel files."
 )
 
-if not os.environ.get("ANTHROPIC_API_KEY"):
+API_KEY = get_setting("ANTHROPIC_API_KEY")
+if not API_KEY:
     st.error(
         "This app isn't configured yet — ANTHROPIC_API_KEY is missing from the "
         "server settings. Contact whoever set it up."
@@ -88,7 +88,9 @@ if process_clicked:
     for i, uf in enumerate(uploaded):
         progress.progress(i / len(uploaded), text=f"Reading {uf.name}…")
         try:
-            st.session_state.records[uf.name] = extract_from_pdf_bytes(uf.getvalue())
+            st.session_state.records[uf.name] = extract_from_pdf_bytes(
+                uf.getvalue(), api_key=API_KEY
+            )
         except Exception as exc:  # surface the failure, keep processing the rest
             st.session_state.records[uf.name] = {"__error__": str(exc)}
     progress.progress(1.0, text="Done")
