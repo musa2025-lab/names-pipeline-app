@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 
 import anthropic
+import pymupdf
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -89,30 +90,56 @@ Preserve leading zeros on phone numbers exactly as written.
 """
 
 
+RENDER_DPI = 220  # ~1870x2420px for Letter - detailed, under the 2576px cap
+MAX_EDGE_PX = 2576  # model's high-resolution vision limit
+
+
+def render_pages_to_png(pdf_bytes: bytes) -> list[bytes]:
+    """Rasterise every page of the PDF to PNG.
+
+    Scanners embed their own OCR text layer in these PDFs, and on real scans
+    that layer is unreliable - one sample had the sub-county as "PwEl4wIeo" and
+    every beneficiary slip number as "NTUO000NN" (letter O) instead of
+    "NTU0000NN". Sending the PDF puts that text in front of the model alongside
+    the image, and it copies the scanner's mistakes: measured 0/30 slip numbers
+    correct from the PDF versus 30/30 from a rendered image of the same page.
+
+    Rasterising throws the text layer away so only the picture is read.
+    """
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    pages = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=RENDER_DPI)  # honours the page's /Rotate flag
+        if max(pix.width, pix.height) > MAX_EDGE_PX:
+            scale = MAX_EDGE_PX / max(pix.width, pix.height)
+            pix = page.get_pixmap(dpi=int(RENDER_DPI * scale))
+        pages.append(pix.tobytes("png"))
+    doc.close()
+    return pages
+
+
 def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict:
     """Send one scanned slip to Claude and return the structured fields."""
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+    content = [
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": base64.standard_b64encode(png).decode("utf-8"),
+            },
+        }
+        for png in render_pages_to_png(pdf_bytes)
+    ]
+    content.append({"type": "text", "text": EXTRACTION_PROMPT})
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=8000,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "application/pdf",
-                            "data": pdf_b64,
-                        },
-                    },
-                    {"type": "text", "text": EXTRACTION_PROMPT},
-                ],
-            }
-        ],
+        # Sheets run to 30 rows x 6 fields, so leave generous headroom.
+        max_tokens=16000,
+        messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": EXTRACTION_SCHEMA}},
     )
 
