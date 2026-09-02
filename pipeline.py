@@ -15,7 +15,11 @@ import zipfile
 from pathlib import Path
 
 import anthropic
-import pymupdf
+
+try:
+    import pymupdf
+except ImportError:  # released as "fitz" before 1.24.3
+    import fitz as pymupdf
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter

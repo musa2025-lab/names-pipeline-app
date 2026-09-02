@@ -2,4 +2,6 @@ streamlit
 pandas
 anthropic
 openpyxl
-pymupdf
+# >=1.24.3 is the first release importable as "pymupdf"; older ones are
+# named "fitz" only, and an unpinned install can resolve to one of those.
+pymupdf>=1.24.3
