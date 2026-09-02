@@ -19,6 +19,8 @@ from settings import get_setting
 from pipeline import (
     BENEFICIARY_FIELDS,
     build_zip,
+    check_beneficiary,
+    check_slip_sequence,
     classify_location,
     collect_new_locations,
     extract_from_pdf_bytes,
@@ -234,6 +236,31 @@ for filename, record in st.session_state.records.items():
         edited_beneficiaries = (
             edited_df.rename(columns=reverse_map).fillna("").to_dict("records")
         )
+
+        # Point the reviewer at values that can't be right, rather than asking
+        # them to re-read every cell. These don't block the download - the
+        # operator has the paper and the final say.
+        issues = []
+        for row_no, row in enumerate(edited_beneficiaries, 1):
+            for field, reason in check_beneficiary(row).items():
+                issues.append(
+                    f"**Row {row_no}** · {EDITOR_COLUMNS[field]}: "
+                    f"`{row.get(field)}` — {reason}"
+                )
+        issues += [f"**{w}**" for w in check_slip_sequence(edited_beneficiaries)]
+
+        if issues:
+            with st.container(border=True):
+                st.markdown(f"##### ⚠️ {len(issues)} value(s) to check against the paper")
+                st.caption(
+                    "These can't be correct as written, so they're almost "
+                    "certainly misreads. Fix them in the table above — the "
+                    "download isn't blocked."
+                )
+                for issue in issues[:25]:
+                    st.markdown(f"- {issue}")
+                if len(issues) > 25:
+                    st.caption(f"…and {len(issues) - 25} more.")
 
         rebuilt = {
             "sub_county": "" if sub_county == PICK else sub_county.strip(),

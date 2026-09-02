@@ -203,6 +203,34 @@ def load_locations(csv_path: Path | None = None) -> dict[str, dict[str, list[str
     return tree
 
 
+# Words operators routinely add to a scan's filename that aren't part of the
+# village name. "Ishanje village.pdf" and "Ishanje Village scan1.pdf" must
+# resolve the same as "Ishanje.pdf" - people name files this way by default.
+FILENAME_NOISE = re.compile(
+    r"\b(village|villages|cell|parish|sub\s?county|subcounty|district|"
+    r"scan(?:ned)?\d*|copy|final|signed|new|form|sheet|slip|slips|names?|pdf)\b"
+    r"|\bv?\d+\b",
+    re.IGNORECASE,
+)
+
+# Below this, a filename is too unlike any known village to auto-fill from.
+# Deliberately strict: a wrong guess that the operator accepts is worse than
+# no guess at all, because it silently misfiles a whole village.
+FILENAME_MATCH_THRESHOLD = 0.86
+
+
+def clean_filename_stem(filename: str) -> str:
+    """Strip numbering and boilerplate words from a scan's filename."""
+    stem = Path(filename).stem
+    stem = re.sub(r"^\d+[.\s_-]+", "", stem)  # leading "1. " / "03_"
+    # Separators must become spaces *before* the noise words are stripped:
+    # "_" is a word character, so \bvillage\b never matches inside
+    # "Ishanje_village_final".
+    stem = re.sub(r"[_-]+", " ", stem)
+    stem = FILENAME_NOISE.sub(" ", stem)
+    return re.sub(r"\s+", " ", stem).strip()
+
+
 def guess_location(filename: str, tree: dict[str, dict[str, list[str]]]) -> tuple[str, str, str]:
     """Best-effort (sub_county, parish, village) for an uploaded file.
 
@@ -210,17 +238,126 @@ def guess_location(filename: str, tree: dict[str, dict[str, list[str]]]) -> tupl
     what the old pipeline used and what compile_beneficiaries.py derives the
     village from, so it is far more reliable than reading handwriting. Returns
     empty strings where there's no confident match, leaving the user to pick.
-    """
-    stem = Path(filename).stem
-    stem = re.sub(r"^\d+[.\s]+", "", stem).strip()
-    target = stem.casefold()
 
+    Matching is done on a cleaned stem, then falls back to a close-but-inexact
+    match, so "Ishanje village.pdf" and "Ishanje Village scan1.pdf" resolve the
+    same as "Ishanje.pdf".
+    """
+    stem = clean_filename_stem(filename)
+    target = stem.casefold()
+    if not target:
+        return "", "", Path(filename).stem
+
+    best: tuple[float, tuple[str, str, str]] = (0.0, ("", "", ""))
     for sub_county, parishes in tree.items():
         for parish, villages in parishes.items():
             for village in villages:
-                if village.casefold() == target:
+                name = village.casefold()
+                if name == target:
                     return sub_county, parish, village
+                score = difflib.SequenceMatcher(None, name, target).ratio()
+                if score > best[0]:
+                    best = (score, (sub_county, parish, village))
+
+    if best[0] >= FILENAME_MATCH_THRESHOLD:
+        return best[1]
     return "", "", stem
+
+
+# --- Field checks -----------------------------------------------------------
+#
+# Handwriting reading is good on structured fields but unreliable on free text:
+# real extractions have produced phone numbers of 7 and 13 digits, and numbers
+# with no leading zero. These checks catch values that are *provably* wrong -
+# they don't confirm a value is right, only that it can't be. The point is to
+# tell the reviewer where to look, not to correct anything automatically.
+
+UG_PHONE = re.compile(r"^0\d{9}$")            # 10 digits, leading zero
+SLIP_NUMBER = re.compile(r"^[A-Z]{2,4}\d{4,8}$", re.IGNORECASE)
+ID_NUMBER = re.compile(r"^[A-Z0-9]{8,20}$", re.IGNORECASE)
+GENDER_VALUES = {"M", "F"}
+YES_NO_VALUES = {"Y", "N"}
+
+
+def check_beneficiary(row: dict) -> dict[str, str]:
+    """Return {field: reason} for values that cannot be correct as written.
+
+    Blank is never an error - an illegible field is meant to come back empty
+    rather than guessed, and some beneficiaries genuinely have no phone.
+    """
+    problems: dict[str, str] = {}
+
+    phone = str(row.get("phone_number") or "").strip()
+    if phone and not UG_PHONE.match(phone):
+        digits = sum(c.isdigit() for c in phone)
+        if not phone.startswith("0"):
+            problems["phone_number"] = f"{digits} digits, no leading zero"
+        else:
+            problems["phone_number"] = f"{digits} digits, expected 10"
+
+    slip = str(row.get("slip_number") or "").strip()
+    if slip and not SLIP_NUMBER.match(slip):
+        problems["slip_number"] = "unexpected format"
+
+    id_no = str(row.get("id_number") or "").strip()
+    if id_no and not ID_NUMBER.match(id_no.replace(" ", "")):
+        problems["id_number"] = "unexpected format"
+
+    gender = str(row.get("gender") or "").strip().upper()
+    if gender and gender not in GENDER_VALUES:
+        problems["gender"] = "expected M or F"
+
+    stove = str(row.get("stove_question") or "").strip().upper()
+    if stove and stove not in YES_NO_VALUES:
+        problems["stove_question"] = "expected Y or N"
+
+    return problems
+
+
+def check_slip_sequence(rows: list[dict]) -> list[str]:
+    """Warn about duplicate or out-of-order slip numbers within one sheet.
+
+    Slip numbers are pre-printed in an unbroken run, so a duplicate or a jump
+    is a strong sign a row was misread - the scanner's own OCR turned
+    NTU000031 into NTUO00031 on every row of one sample.
+    """
+    seen: dict[str, int] = {}
+    warnings = []
+    numbers = []
+    prefixes: dict[str, list[int]] = {}
+    for i, row in enumerate(rows, 1):
+        slip = str(row.get("slip_number") or "").strip().upper()
+        if not slip:
+            continue
+        if slip in seen:
+            warnings.append(f"Row {i}: slip {slip} duplicates row {seen[slip]}")
+        seen[slip] = i
+        prefix = re.match(r"^[A-Z]*", slip).group()
+        prefixes.setdefault(prefix, []).append(i)
+        digits = re.sub(r"\D", "", slip)
+        if digits:
+            numbers.append((i, int(digits)))
+
+    # Every slip on a sheet shares one pre-printed prefix, so an odd one out is
+    # a misread - "NTUO" for "NTU0" is exactly the mistake the scanner's own
+    # OCR made on every row of one sample.
+    if len(prefixes) > 1:
+        main = max(prefixes, key=lambda p: len(prefixes[p]))
+        for prefix, row_numbers in prefixes.items():
+            if prefix != main:
+                where = ", ".join(str(n) for n in row_numbers[:5])
+                warnings.append(
+                    f"Row{'s' if len(row_numbers) > 1 else ''} {where}: prefix "
+                    f"{prefix!r} differs from {main!r} used by the other rows"
+                )
+
+    for (prev_row, prev_n), (row_i, n) in zip(numbers, numbers[1:]):
+        if n != prev_n + 1:
+            warnings.append(
+                f"Row {row_i}: slip jumps from {prev_n} to {n} "
+                f"(expected {prev_n + 1})"
+            )
+    return warnings
 
 
 # A name this close to an existing one is far more likely a typo than a new
