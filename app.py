@@ -41,7 +41,21 @@ EDITOR_COLUMNS = {
 
 PICK = "— select —"
 
+SUPPORT_EMAIL = "musa.hakizimana@delagua.org"
+
 st.set_page_config(page_title="Uganda Names Pipeline", page_icon="📋", layout="wide")
+
+
+def footer() -> None:
+    """Contact line at the foot of the page.
+
+    Called explicitly at each exit point rather than once at the end of the
+    script: Streamlit runs top to bottom, so anything after an st.stop() never
+    renders - and the "no slips processed yet" state stops early.
+    """
+    st.divider()
+    st.caption(f"For help contact: [{SUPPORT_EMAIL}](mailto:{SUPPORT_EMAIL})")
+
 
 # Gate before anything else renders - this app handles beneficiary personal data.
 CURRENT_USER = require_access()
@@ -58,8 +72,9 @@ API_KEY = get_setting("ANTHROPIC_API_KEY")
 if not API_KEY:
     st.error(
         "This app isn't configured yet — ANTHROPIC_API_KEY is missing from the "
-        "server settings. Contact whoever set it up."
+        f"server settings. Contact {SUPPORT_EMAIL}."
     )
+    footer()
     st.stop()
 
 LOCATIONS = load_locations()
@@ -100,6 +115,7 @@ if process_clicked:
 
 if not st.session_state.records:
     st.info("No slips processed yet. Upload one or more PDFs and press **Process**.")
+    footer()
     st.stop()
 
 st.divider()
@@ -324,3 +340,5 @@ if edited_records:
             "`Processed_Data/{Sub county}/{Parish}/{Village}.xlsx`, then run "
             "**RUN ME.bat** as usual."
         )
+
+footer()
