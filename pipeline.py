@@ -259,17 +259,28 @@ def guess_location(filename: str, tree: dict[str, dict[str, list[str]]]) -> tupl
     if not target:
         return "", "", Path(filename).stem
 
+    exact: list[tuple[str, str, str]] = []
     scored: list[tuple[float, tuple[str, str, str]]] = []
     for sub_county, parishes in tree.items():
         for parish, villages in parishes.items():
             for village in villages:
                 name = village.casefold()
                 if name == target:
-                    return sub_county, parish, village
+                    exact.append((sub_county, parish, village))
+                    continue
                 scored.append((
                     difflib.SequenceMatcher(None, name, target).ratio(),
                     (sub_county, parish, village),
                 ))
+
+    # Some village names exist under more than one parish - NYAKABUNGO sits in
+    # both KATOJO and RUHAAMA, RURAMA in both RWENGOMA and Kayenje. The file
+    # name alone cannot say which, so the operator must choose rather than the
+    # app filing a whole village under the wrong parish on a coin flip.
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        return "", "", stem
 
     scored.sort(key=lambda x: -x[0])
     if not scored or scored[0][0] < FILENAME_MATCH_THRESHOLD:
