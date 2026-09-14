@@ -210,10 +210,13 @@ def load_locations(csv_path: Path | None = None) -> dict[str, dict[str, list[str
 # Words operators routinely add to a scan's filename that aren't part of the
 # village name. "Ishanje village.pdf" and "Ishanje Village scan1.pdf" must
 # resolve the same as "Ishanje.pdf" - people name files this way by default.
+# NOTE: bare numbers are deliberately NOT stripped. Many villages are
+# distinguished only by a trailing number - Migyera 1/2, Kyenjojo 1-4,
+# Mutojo 1/2/3 - so removing it would file beneficiaries into a sibling
+# village. Only numbers attached to a scan word ("scan2") are dropped.
 FILENAME_NOISE = re.compile(
     r"\b(village|villages|cell|parish|sub\s?county|subcounty|district|"
-    r"scan(?:ned)?\d*|copy|final|signed|new|form|sheet|slip|slips|names?|pdf)\b"
-    r"|\bv?\d+\b",
+    r"scan(?:ned)?\s*\d*|copy|final|signed|new|form|sheet|slip|slips|names?|pdf)\b",
     re.IGNORECASE,
 )
 
@@ -221,6 +224,10 @@ FILENAME_NOISE = re.compile(
 # Deliberately strict: a wrong guess that the operator accepts is worse than
 # no guess at all, because it silently misfiles a whole village.
 FILENAME_MATCH_THRESHOLD = 0.86
+
+# If the two best candidates are this close, the filename doesn't identify one
+# village and the operator must choose.
+AMBIGUOUS_MARGIN = 0.05
 
 
 def clean_filename_stem(filename: str) -> str:
@@ -252,20 +259,28 @@ def guess_location(filename: str, tree: dict[str, dict[str, list[str]]]) -> tupl
     if not target:
         return "", "", Path(filename).stem
 
-    best: tuple[float, tuple[str, str, str]] = (0.0, ("", "", ""))
+    scored: list[tuple[float, tuple[str, str, str]]] = []
     for sub_county, parishes in tree.items():
         for parish, villages in parishes.items():
             for village in villages:
                 name = village.casefold()
                 if name == target:
                     return sub_county, parish, village
-                score = difflib.SequenceMatcher(None, name, target).ratio()
-                if score > best[0]:
-                    best = (score, (sub_county, parish, village))
+                scored.append((
+                    difflib.SequenceMatcher(None, name, target).ratio(),
+                    (sub_county, parish, village),
+                ))
 
-    if best[0] >= FILENAME_MATCH_THRESHOLD:
-        return best[1]
-    return "", "", stem
+    scored.sort(key=lambda x: -x[0])
+    if not scored or scored[0][0] < FILENAME_MATCH_THRESHOLD:
+        return "", "", stem
+
+    # Refuse to guess between near-equal candidates. "Rwemiyaga.pdf" scores
+    # almost identically against "Rwemiyaga 1" and "Rwemiyaga 2"; picking one
+    # would quietly file a whole village's beneficiaries under its sibling.
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < AMBIGUOUS_MARGIN:
+        return "", "", stem
+    return scored[0][1]
 
 
 # --- Field checks -----------------------------------------------------------
