@@ -26,6 +26,7 @@ from pipeline import (
     extract_from_pdf_bytes,
     guess_location,
     load_locations,
+    merge_by_village,
     village_output_path,
 )
 
@@ -302,9 +303,25 @@ if edited_records:
         for b in r["beneficiaries"]
         if str(b.get("full_name") or "").strip() or str(b.get("slip_number") or "").strip()
     )
+    merged = merge_by_village(edited_records)
     st.subheader(
-        f"Ready: {len(edited_records)} village file(s), {total_rows} beneficiary row(s)"
+        f"Ready: {len(merged)} village file(s), {total_rows} beneficiary row(s)"
     )
+
+    # Several sheets for one village become a single file. Say so plainly -
+    # the operator uploaded more files than they're about to receive.
+    if len(merged) < len(edited_records):
+        lines = []
+        for path, rows in merged.items():
+            slips = sum(1 for r in edited_records if village_output_path(r) == path)
+            if slips > 1:
+                name = path.rsplit("/", 1)[-1].removesuffix(".xlsx")
+                lines.append(f"- **{name}** — {slips} slips combined, {len(rows)} rows")
+        st.info(
+            "Slips for the same village are combined into one file:\n\n"
+            + "\n".join(lines),
+            icon="🗂️",
+        )
 
     new_locations = collect_new_locations(edited_records, LOCATIONS)
     if new_locations:

@@ -659,6 +659,28 @@ def village_output_path(record: dict) -> str:
     return f"Processed_Data/{sub_county}/{parish}/{village}.xlsx"
 
 
+def merge_by_village(records: list[dict]) -> dict[str, list[dict]]:
+    """Group every slip's rows by its village file path, preserving order.
+
+    A village usually runs to more than one sheet, so several uploads share an
+    output path. They are merged into one file per village rather than written
+    side by side: an earlier version suffixed the second file " (1)", and
+    compile_beneficiaries.py then read "KAYENJE (1)" as a village in its own
+    right and minted a location for it.
+
+    Rows are appended as they come, never de-duplicated. A person appearing on
+    two sheets is a real data problem, and Validation_Report.xlsx catches it
+    against the whole dataset - dropping rows here would hide that, and risks
+    discarding two people who genuinely share a name.
+    """
+    merged: dict[str, list[dict]] = {}
+    for record in records:
+        merged.setdefault(village_output_path(record), []).extend(
+            record.get("beneficiaries", [])
+        )
+    return merged
+
+
 def build_zip(
     records: list[dict], tree: dict[str, dict[str, list[str]]] | None = None
 ) -> bytes:
@@ -666,24 +688,15 @@ def build_zip(
 
     `records` are dicts with the header fields plus a "beneficiaries" list -
     i.e. the extraction output, optionally after the user edited it on screen.
+    Slips for the same village are combined into a single file.
 
     If any location isn't in `tree`, a NEW_LOCATIONS_REVIEW.xlsx is added at the
     top of the zip so it can't be missed.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        used_paths: dict[str, int] = {}
-        for record in records:
-            path = village_output_path(record)
-            # Two slips for the same village would collide inside the zip;
-            # suffix rather than silently overwrite one of them.
-            if path in used_paths:
-                used_paths[path] += 1
-                stem, ext = path.rsplit(".", 1)
-                path = f"{stem} ({used_paths[path]}).{ext}"
-            else:
-                used_paths[path] = 0
-            xlsx_bytes, _ = build_village_excel_bytes(record.get("beneficiaries", []))
+        for path, beneficiaries in merge_by_village(records).items():
+            xlsx_bytes, _ = build_village_excel_bytes(beneficiaries)
             zf.writestr(path, xlsx_bytes)
 
         if tree:
