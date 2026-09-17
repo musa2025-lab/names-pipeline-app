@@ -110,7 +110,9 @@ if process_clicked:
                 uf.getvalue(), api_key=API_KEY
             )
         except Exception as exc:  # surface the failure, keep processing the rest
-            st.session_state.records[uf.name] = {"__error__": str(exc)}
+            st.session_state.records[uf.name] = {
+                "__error__": f"{type(exc).__name__}: {exc}"
+            }
     progress.progress(1.0, text="Done")
     progress.empty()
 

@@ -15,11 +15,6 @@ import zipfile
 from pathlib import Path
 
 import anthropic
-
-try:
-    import pymupdf
-except ImportError:  # released as "fitz" before 1.24.3
-    import fitz as pymupdf
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
@@ -98,6 +93,29 @@ RENDER_DPI = 220  # ~1870x2420px for Letter - detailed, under the 2576px cap
 MAX_EDGE_PX = 2576  # model's high-resolution vision limit
 
 
+def _load_pymupdf():
+    """Import PyMuPDF at call time, not at module import.
+
+    Importing it at the top meant a missing or broken install took the whole
+    app down with an ImportError on "from pipeline import (...)" - and
+    Streamlit redacts the underlying message, so the cause was invisible.
+    Deferring it lets the app start and report what actually went wrong.
+    """
+    try:
+        import pymupdf
+        return pymupdf
+    except ImportError:
+        try:
+            import fitz  # the package's name before 1.24.3
+            return fitz
+        except ImportError as exc:
+            raise RuntimeError(
+                "PyMuPDF isn't available on the server, so scanned pages can't "
+                f"be converted to images. Underlying error: {exc}. "
+                "Check that 'pymupdf' installed during the build."
+            ) from exc
+
+
 def render_pages_to_png(pdf_bytes: bytes) -> list[bytes]:
     """Rasterise every page of the PDF to PNG.
 
@@ -110,6 +128,7 @@ def render_pages_to_png(pdf_bytes: bytes) -> list[bytes]:
 
     Rasterising throws the text layer away so only the picture is read.
     """
+    pymupdf = _load_pymupdf()
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     pages = []
     for page in doc:
