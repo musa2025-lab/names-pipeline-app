@@ -91,6 +91,7 @@ Preserve leading zeros on phone numbers exactly as written.
 
 RENDER_DPI = 220  # ~1870x2420px for Letter - detailed, under the 2576px cap
 MAX_EDGE_PX = 2576  # model's high-resolution vision limit
+JPEG_QUALITY = 80  # visually lossless for scanned text at this resolution
 
 
 def _load_pymupdf():
@@ -117,7 +118,7 @@ def _load_pymupdf():
 
 
 def render_pages_to_png(pdf_bytes: bytes) -> list[bytes]:
-    """Rasterise every page of the PDF to PNG.
+    """Rasterise every page of the PDF to JPEG.
 
     Scanners embed their own OCR text layer in these PDFs, and on real scans
     that layer is unreliable - one sample had the sub-county as "PwEl4wIeo" and
@@ -127,17 +128,26 @@ def render_pages_to_png(pdf_bytes: bytes) -> list[bytes]:
     correct from the PDF versus 30/30 from a rendered image of the same page.
 
     Rasterising throws the text layer away so only the picture is read.
+
+    JPEG rather than PNG: at the same pixel dimensions a page is 674KB instead
+    of 3,059KB, and 898KB instead of 4,078KB once base64-encoded for the API.
+    PNG cost roughly 7MB of memory per page and pushed the app past Community
+    Cloud's limit on a real batch. The dimensions are what the reading accuracy
+    depends on, and those are unchanged.
     """
     pymupdf = _load_pymupdf()
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     pages = []
-    for page in doc:
-        pix = page.get_pixmap(dpi=RENDER_DPI)  # honours the page's /Rotate flag
-        if max(pix.width, pix.height) > MAX_EDGE_PX:
-            scale = MAX_EDGE_PX / max(pix.width, pix.height)
-            pix = page.get_pixmap(dpi=int(RENDER_DPI * scale))
-        pages.append(pix.tobytes("png"))
-    doc.close()
+    try:
+        for page in doc:
+            pix = page.get_pixmap(dpi=RENDER_DPI)  # honours the page's /Rotate
+            if max(pix.width, pix.height) > MAX_EDGE_PX:
+                scale = MAX_EDGE_PX / max(pix.width, pix.height)
+                pix = page.get_pixmap(dpi=int(RENDER_DPI * scale))
+            pages.append(pix.tobytes("jpeg", jpg_quality=JPEG_QUALITY))
+            pix = None  # release the bitmap before rendering the next page
+    finally:
+        doc.close()
     return pages
 
 
@@ -145,17 +155,17 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
     """Send one scanned slip to Claude and return the structured fields."""
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
-    content = [
-        {
+    pages = render_pages_to_png(pdf_bytes)
+    content = []
+    while pages:  # pop as we encode - never hold the raw and encoded copies
+        content.append({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
-                "data": base64.standard_b64encode(png).decode("utf-8"),
+                "media_type": "image/jpeg",
+                "data": base64.standard_b64encode(pages.pop(0)).decode("utf-8"),
             },
-        }
-        for png in render_pages_to_png(pdf_bytes)
-    ]
+        })
     content.append({"type": "text", "text": EXTRACTION_PROMPT})
 
     response = client.messages.create(
@@ -166,6 +176,7 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
         output_config={"format": {"type": "json_schema", "schema": EXTRACTION_SCHEMA}},
     )
 
+    content.clear()  # drop the base64 payload before returning
     text = next(b.text for b in response.content if b.type == "text")
     return json.loads(text)
 

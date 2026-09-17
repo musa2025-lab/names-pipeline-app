@@ -11,6 +11,8 @@ this app's server-side settings.
 Run locally:   streamlit run app.py
 """
 
+import gc
+
 import pandas as pd
 import streamlit as st
 
@@ -113,6 +115,10 @@ if process_clicked:
             st.session_state.records[uf.name] = {
                 "__error__": f"{type(exc).__name__}: {exc}"
             }
+        # Reclaim each slip's page images before reading the next one. Without
+        # this a long batch accumulates them and the app is killed for going
+        # over Community Cloud's memory limit.
+        gc.collect()
     progress.progress(1.0, text="Done")
     progress.empty()
 
