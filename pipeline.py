@@ -75,17 +75,25 @@ EXTRACTION_SCHEMA = {
     "additionalProperties": False,
 }
 
-EXTRACTION_PROMPT = """This is a scanned Uganda CHW beneficiary registration slip.
+EXTRACTION_PROMPT = """These are scanned Uganda CHW beneficiary registration \
+sheets. There may be SEVERAL pages, all belonging to the same village - the \
+sheets are scanned together into one file.
 
-Extract the header fields (Sub county, Parish, Village, Leader Name, Leader \
-Phone, VHT Name, VHT Phone) and every row of the Beneficiaries table (Full \
-Name, Beneficiary Slip Number, Phone Number, ID Number, Gender, Stove \
-Question Y/N).
+Work through EVERY page in order and return EVERY beneficiary row from ALL of \
+them in a single combined list. Do not stop after the first page. A later page \
+usually continues the same numbering, so the list should run unbroken from the \
+first row of page 1 to the last row of the final page.
+
+Take the header fields (Sub county, Parish, Village, Leader Name, Leader \
+Phone, VHT Name, VHT Phone) from wherever they are filled in - usually the \
+first page. For each beneficiary row capture Full Name, Beneficiary Slip \
+Number, Phone Number, ID Number, Gender and Stove Question (Y/N).
 
 Only include a beneficiary row if it has a full name or a slip number written \
-on it - skip rows that are entirely blank. If a single field is illegible or \
-not filled in, return an empty string for that field rather than guessing. \
-Preserve leading zeros on phone numbers exactly as written.
+on it - skip rows that are entirely blank, including the unused rows at the \
+end of a sheet. If a single field is illegible or not filled in, return an \
+empty string for that field rather than guessing. Preserve leading zeros on \
+phone numbers exactly as written.
 """
 
 
@@ -156,6 +164,7 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
     client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
     pages = render_pages_to_png(pdf_bytes)
+    page_count = len(pages)
     content = []
     while pages:  # pop as we encode - never hold the raw and encoded copies
         content.append({
@@ -170,15 +179,28 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
 
     response = client.messages.create(
         model=MODEL,
-        # Sheets run to 30 rows x 6 fields, so leave generous headroom.
-        max_tokens=16000,
+        # Scans arrive merged - one file holds every sheet for a village, six
+        # pages and 300 rows is normal. At roughly 70 tokens a row, the old
+        # 16000 ceiling truncated the reply mid-list and silently lost the tail.
+        max_tokens=48000,
         messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": EXTRACTION_SCHEMA}},
     )
 
     content.clear()  # drop the base64 payload before returning
+
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(
+            f"This file has more rows than one reply can hold ({page_count} "
+            "pages). Some beneficiaries would be missing, so nothing has been "
+            "read. Split the PDF into smaller parts and upload them separately "
+            "- the app combines sheets for the same village automatically."
+        )
+
     text = next(b.text for b in response.content if b.type == "text")
-    return json.loads(text)
+    result = json.loads(text)
+    result["__pages__"] = page_count  # shown in the UI so a merged file is obvious
+    return result
 
 
 LOCATIONS_CSV = Path(__file__).resolve().parent / "g_Locations_UG.csv"

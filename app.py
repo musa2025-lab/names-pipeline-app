@@ -141,8 +141,13 @@ for filename, record in st.session_state.records.items():
     beneficiaries = record.get("beneficiaries", [])
     g_sub, g_parish, g_village = guess_location(filename, LOCATIONS)
 
+    # Scans arrive merged - one file often holds every sheet for a village.
+    # Showing the page count lets the operator check nothing was missed.
+    pages = record.get("__pages__")
+    page_note = f" · {pages} pages" if pages and pages > 1 else ""
+
     with st.expander(
-        f"📄  {filename} — {len(beneficiaries)} row(s)", expanded=True
+        f"📄  {filename} — {len(beneficiaries)} row(s){page_note}", expanded=True
     ):
         st.markdown("##### Location")
         st.caption(
