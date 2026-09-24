@@ -177,7 +177,11 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
         })
     content.append({"type": "text", "text": EXTRACTION_PROMPT})
 
-    response = client.messages.create(
+    # Streamed rather than a plain create(): at this max_tokens the SDK refuses
+    # a non-streaming call, since a reply that long could run past its 10-minute
+    # ceiling. The result is identical - the whole message is collected before
+    # anything is returned.
+    with client.messages.stream(
         model=MODEL,
         # Scans arrive merged - one file holds every sheet for a village, six
         # pages and 300 rows is normal. At roughly 70 tokens a row, the old
@@ -185,7 +189,8 @@ def extract_from_pdf_bytes(pdf_bytes: bytes, api_key: str | None = None) -> dict
         max_tokens=48000,
         messages=[{"role": "user", "content": content}],
         output_config={"format": {"type": "json_schema", "schema": EXTRACTION_SCHEMA}},
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     content.clear()  # drop the base64 payload before returning
 
